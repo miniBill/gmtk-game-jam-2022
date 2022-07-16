@@ -9,7 +9,7 @@
 		"parcel-reporter-static-files-copy": "^1.3.4"
 	},
 	"scripts": {
-		"start": "PARCEL_ELM_NO_DEBUG=1 parcel src/index.html",
-		"build": "rm -r dist; parcel build --public-url . src/index.html; rm dist/*.tsx dist/*.map; cd dist; zip Game.zip *"
+		"start": "rm -rf dist; PARCEL_ELM_NO_DEBUG=1 parcel src/index.html",
+		"build": "rm -rf dist; parcel build --public-url . src/index.html; rm dist/*.tsx dist/*.map; cd dist; zip Game.zip *"
 	}
 }
