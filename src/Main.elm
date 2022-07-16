@@ -287,7 +287,7 @@ applyDamage ({ player } as innerModel) =
                                 ( 0, False, "Slain a Bat!" )
 
                             ( False, Rat _ ) ->
-                                ( 2, False, "A Rat hit you!" )
+                                ( 2, False, "A Rat bit you!" )
 
                             ( True, Rat { health } ) ->
                                 ( health - 1
@@ -303,15 +303,15 @@ applyDamage ({ player } as innerModel) =
                                 ( 2, False, "You got poisoned!" )
 
                             ( _, Potion { health } ) ->
-                                ( -health, False, "Got a potion (+" ++ String.fromInt health ++ "hp)" )
+                                ( -health, False, "Got a potion (+" ++ String.fromInt health ++ "hp)!" )
 
                             ( _, Sord _ ) ->
-                                ( 0, True, "Picked up SORD" )
+                                ( 0, True, "Picked up SORD!" )
                 in
                 { innerModel
                     | player =
                         { player
-                            | health = player.health - damage
+                            | health = clamp 0 9 <| player.health - damage
                             , hasHit = Just hasHit
                             , armed = player.armed || armed
                         }
@@ -565,7 +565,14 @@ entitiesGenerator =
                 |> Random.list 12
 
         sord =
-            buildEntity randomSord (randomPosition <| \( x, y ) -> x < 6 && y < 6)
+            buildEntity randomSord
+                (randomPosition <|
+                    \( x, y ) ->
+                        (x > boardSize // 4)
+                            && (y > boardSize // 4)
+                            && (x < boardSize * 3 // 4)
+                            && (y < boardSize * 3 // 4)
+                )
 
         dedupAndNameEntities raw =
             raw
@@ -583,6 +590,24 @@ entitiesGenerator =
                             )
                             (h :: t)
                             |> Maybe.withDefault h
+                    )
+                |> List.sortBy
+                    (\{ data } ->
+                        case data of
+                            Sord _ ->
+                                0
+
+                            Potion _ ->
+                                1
+
+                            Spider ->
+                                2
+
+                            Bat _ ->
+                                3
+
+                            Rat _ ->
+                                4
                     )
                 |> List.indexedMap
                     (\i { position, data } ->
