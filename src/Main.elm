@@ -700,7 +700,7 @@ entitiesGenerator level =
 randomSord : Generator EntityData
 randomSord =
     Random.map (\index -> Sord { picked = False, index = index })
-        (Random.uniform 103 [ 104, 105, 106, 107, 117, 118, 119 ])
+        (Random.uniform 22 (List.range 23 29))
 
 
 randomPosition : (Position -> Bool) -> Generator Position
@@ -746,7 +746,7 @@ randomPotion =
 
 tilePositionFromIndex : Int -> Position
 tilePositionFromIndex index =
-    ( modBy 12 index, index // 12 )
+    ( modBy 11 index, index // 11 )
 
 
 
@@ -815,23 +815,34 @@ areas ({ player, level } as innerModel) =
                         List.range 0 (boardSize - 1)
                             |> List.map
                                 (\y ->
-                                    ( ( x, y )
-                                    , Tile.fromPosition
-                                        (tilePositionFromIndex
-                                            (if (Tuple.first <| Random.step (Random.int 0 10) (Random.initialSeed <| x + y * boardSize)) < 4 then
-                                                49
-
-                                             else
-                                                48
-                                            )
-                                        )
-                                    )
+                                    backgroundTile x y
                                 )
                     )
 
+        backgroundTile : Int -> Int -> ( ( Int, Int ), Tile msg )
+        backgroundTile x y =
+            ( ( x, y )
+            , Tile.fromPosition
+                (tilePositionFromIndex
+                    (if
+                        (Tuple.first <|
+                            Random.step
+                                (Random.int 0 10)
+                                (Random.initialSeed <| x + y * boardSize)
+                        )
+                            < 4
+                     then
+                        0
+
+                     else
+                        1
+                    )
+                )
+            )
+
         door : ( Position, Tile msg )
         door =
-            ( doorPosition, Tile.fromPosition (tilePositionFromIndex 45) )
+            ( doorPosition, Tile.fromPosition (tilePositionFromIndex 2) )
 
         ( messageTop, messageBottom ) =
             let
@@ -870,7 +881,7 @@ areas ({ player, level } as innerModel) =
 
         tinyDungeon : Tileset
         tinyDungeon =
-            { source = "kenney_tinydungeon.png"
+            { source = "tileset.png"
             , spriteWidth = tileSize
             , spriteHeight = tileSize
             }
@@ -940,13 +951,13 @@ playerToTile { position, health, armed } =
             tilePositionFromIndex <|
                 if health > 0 then
                     if armed then
-                        96
+                        4
 
                     else
-                        99
+                        3
 
                 else
-                    121
+                    5
     )
 
 
@@ -959,16 +970,16 @@ entityToTile player ({ name, position, data, intention } as entity) =
                 ( Potion { health }, _ ) ->
                     case health of
                         0 ->
-                            Just 113
+                            Just 6
 
                         1 ->
-                            Just 115
+                            Just 8
 
                         2 ->
-                            Just 116
+                            Just 7
 
                         _ ->
-                            Just 114
+                            Just 9
 
                 ( _, False ) ->
                     Nothing
@@ -977,7 +988,7 @@ entityToTile player ({ name, position, data, intention } as entity) =
                     Just index
 
                 _ ->
-                    Just <| (+) 136 <| Tuple.first <| getDamageAndHit player entity
+                    Just <| (+) 15 <| Tuple.first <| getDamageAndHit player entity
 
         tiles : List (Maybe Int)
         tiles =
@@ -986,16 +997,16 @@ entityToTile player ({ name, position, data, intention } as entity) =
                 (\direction ->
                     case direction of
                         Up ->
-                            132
+                            11
 
                         Right ->
-                            133
+                            12
 
                         Down ->
-                            134
+                            13
 
                         Left ->
-                            135
+                            14
                 )
                 intention
             ]
