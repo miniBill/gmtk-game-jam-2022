@@ -1038,35 +1038,36 @@ playerToTile { position, health, armed } =
 entityToTile : Player -> Entity -> ( Position, Tile msg )
 entityToTile player ({ name, position, data, intention } as entity) =
     let
-        maybeIndex : Maybe Int
-        maybeIndex =
-            case ( data, isActive data ) of
-                ( Potion { health }, _ ) ->
+        index : Int
+        index =
+            case data of
+                Potion { health } ->
                     case health of
                         0 ->
-                            Just 6
+                            6
 
                         1 ->
-                            Just 8
+                            8
 
                         2 ->
-                            Just 7
+                            7
 
                         _ ->
-                            Just 9
+                            9
 
-                ( _, False ) ->
-                    Nothing
-
-                ( Sord { index }, _ ) ->
-                    Just index
+                Sord s ->
+                    s.index
 
                 _ ->
-                    Just <| (+) 15 <| Tuple.first <| getHit player entity
+                    (+) 15 <| Tuple.first <| getHit player entity
 
         tiles : List (Maybe Int)
         tiles =
-            [ maybeIndex
+            [ if isActive data then
+                Just index
+
+              else
+                Nothing
             , Maybe.map
                 (\direction ->
                     case direction of
