@@ -1058,16 +1058,12 @@ viewInner innerModel =
         scale =
             floor <|
                 min
-                    (toFloat (innerModel.size.width - 2 * margin)
+                    (toFloat innerModel.size.width
                         / (boardSize * tileSize)
                     )
-                    (toFloat (innerModel.size.height - 2 * margin)
+                    (toFloat innerModel.size.height
                         / ((boardSize + textLines) * tileSize)
                     )
-
-        margin : number
-        margin =
-            20
     in
     [ PixelEngine.toHtml
         { width = boardSize * tileSize
