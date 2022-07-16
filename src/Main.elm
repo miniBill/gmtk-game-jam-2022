@@ -213,6 +213,7 @@ update msg outerModel =
 
             else
                 let
+                    newModel : InnerModel
                     newModel =
                         { innerModel | player = { player | hasHit = Nothing } }
                             |> movePlayer maybeDirection
@@ -251,17 +252,20 @@ update msg outerModel =
 newLevel : InnerModel -> OuterModel
 newLevel innerModel =
     let
+        newModel : InnerModel
         newModel =
             if hasWon innerModel.player then
                 innerInit innerModel.seed innerModel.size <| innerModel.level + 1
 
             else
                 innerInit innerModel.seed innerModel.size 1
-
-        newPlayer =
-            newModel.player
     in
     if hasWon innerModel.player then
+        let
+            newPlayer : Player
+            newPlayer =
+                newModel.player
+        in
         WaitingPlayer
             { newModel
                 | player =
@@ -300,6 +304,7 @@ applyDamage : InnerModel -> InnerModel
 applyDamage ({ player } as innerModel) =
     if player.hasHit == Nothing then
         let
+            entity : Maybe Entity
             entity =
                 List.Extra.find
                     (\{ position, data } ->
@@ -316,6 +321,7 @@ applyDamage ({ player } as innerModel) =
                     ( damage, hasHit ) =
                         getDamageAndHit player en
 
+                    armed : Bool
                     armed =
                         case en.data of
                             Sord _ ->
@@ -428,6 +434,7 @@ addIntentionToEntities innerModel =
 addIntentionToEntity : Player -> Entity -> Generator Entity
 addIntentionToEntity player entity =
     let
+        directionGenerator : Generator (Maybe Direction)
         directionGenerator =
             case ( isActive entity.data, entity.data ) of
                 ( True, Bat _ ) ->
@@ -484,6 +491,7 @@ towardsPlayer player entity =
         ( ex, ey ) =
             entity.position
 
+        dirs : List Direction
         dirs =
             [ ifTrue (px < ex) Left
             , ifTrue (px > ex) Right
@@ -512,6 +520,7 @@ ifTrue condition value =
 randomDirectionLegalFrom : Position -> Generator Direction
 randomDirectionLegalFrom ( x, y ) =
     let
+        list : List Direction
         list =
             List.filterMap identity
                 [ ifTrue (x > 0) Left
@@ -589,12 +598,17 @@ move direction ( x, y ) =
 entitiesGenerator : Int -> Generator (List Entity)
 entitiesGenerator level =
     let
+        randomEnemyPosition : Generator Position
         randomEnemyPosition =
             randomPosition <|
                 \( x, y ) ->
                     (x > 4 || y > 4)
                         && (x < boardSize - 2 || y < boardSize - 2)
 
+        buildEntity :
+            Generator EntityData
+            -> Generator Position
+            -> Generator { data : EntityData, position : Position }
         buildEntity =
             Random.map2
                 (\data position ->
@@ -603,18 +617,22 @@ entitiesGenerator level =
                     }
                 )
 
+        randoms : Generator (List { data : EntityData, position : Position })
         randoms =
             buildEntity randomEnemy randomEnemyPosition
                 |> Random.list (clamp 5 60 <| 5 * level)
 
+        spiders : Generator (List { data : EntityData, position : Position })
         spiders =
             buildEntity randomSpider randomEnemyPosition
                 |> Random.list (clamp 10 60 <| 10 * level)
 
+        potions : Generator (List { data : EntityData, position : Position })
         potions =
             buildEntity randomPotion randomEnemyPosition
                 |> Random.list (clamp 3 10 <| 20 - level)
 
+        sord : Generator (List { data : EntityData, position : Position })
         sord =
             buildEntity randomSord
                 (randomPosition <|
@@ -626,6 +644,7 @@ entitiesGenerator level =
                 )
                 |> Random.list (max 1 <| 4 - level)
 
+        dedupAndNameEntities : List { position : Position, data : EntityData } -> List Entity
         dedupAndNameEntities raw =
             raw
                 |> List.Extra.gatherEqualsBy .position
@@ -816,6 +835,7 @@ areas ({ player, level } as innerModel) =
 
         ( messageTop, messageBottom ) =
             let
+                format : String -> String -> String
                 format label value =
                     label ++ String.padLeft (boardSize - String.length label) ' ' value
             in
@@ -904,6 +924,7 @@ tilesFromText ( dx, dy ) text =
         |> List.indexedMap
             (\i char ->
                 let
+                    code : Int
                     code =
                         Char.toCode char - 0x20
                 in
@@ -932,6 +953,7 @@ playerToTile { position, health, armed } =
 entityToTile : Player -> Entity -> ( Position, Tile msg )
 entityToTile player ({ name, position, data, intention } as entity) =
     let
+        maybeIndex : Maybe Int
         maybeIndex =
             case ( data, isActive data ) of
                 ( Potion { health }, _ ) ->
@@ -957,18 +979,7 @@ entityToTile player ({ name, position, data, intention } as entity) =
                 _ ->
                     Just <| (+) 136 <| Tuple.first <| getDamageAndHit player entity
 
-        -- ( Bat _, True ) ->
-        --     Just 120
-        -- ( Rat { health }, True ) ->
-        --     case health of
-        --         0 ->
-        --             Nothing
-        --         1 ->
-        --             Just 124
-        --         _ ->
-        --             Just 123
-        -- ( Spider, _ ) ->
-        --     Just 122
+        tiles : List (Maybe Int)
         tiles =
             [ maybeIndex
             , Maybe.map
