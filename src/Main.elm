@@ -548,14 +548,17 @@ entitiesGenerator =
         spiders
         potions
         |> Random.map
-            (List.indexedMap
-                (\i { position, data } ->
-                    { position = position
-                    , data = data
-                    , intention = Nothing
-                    , name = "Enemy " ++ String.fromInt i
-                    }
-                )
+            (\raw ->
+                raw
+                    |> List.Extra.uniqueBy .position
+                    |> List.indexedMap
+                        (\i { position, data } ->
+                            { position = position
+                            , data = data
+                            , intention = Nothing
+                            , name = "Enemy " ++ String.fromInt i
+                            }
+                        )
             )
 
 
