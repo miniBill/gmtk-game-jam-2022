@@ -59,6 +59,8 @@ type alias Entity =
 type EntityData
     = Bat { health : Int }
     | Rat { health : Int }
+    | Spider
+    | Potion { health : Int }
 
 
 type alias Position =
@@ -194,15 +196,22 @@ update msg outerModel =
             ( outerModel, Cmd.none )
 
         ( Move maybeDirection, WaitingPlayer ({ player } as innerModel) ) ->
-            if player.position == ( boardSize - 1, boardSize - 1 ) || player.health <= 0 then
+            if hasWon player || player.health <= 0 then
                 ( outerModel, Cmd.none )
 
             else
-                ( { innerModel | player = { player | hasHit = Nothing } }
-                    |> movePlayer maybeDirection
-                    |> applyDamage
-                    |> WaitingEnemies
-                , Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.2)
+                let
+                    newModel =
+                        { innerModel | player = { player | hasHit = Nothing } }
+                            |> movePlayer maybeDirection
+                            |> applyDamage
+                in
+                ( WaitingEnemies newModel
+                , if hasWon newModel.player then
+                    Cmd.none
+
+                  else
+                    Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.2)
                 )
 
         ( MoveEnemies, WaitingPlayer _ ) ->
@@ -220,6 +229,11 @@ update msg outerModel =
             )
 
 
+hasWon : Player -> Bool
+hasWon player =
+    player.position == ( boardSize - 1, boardSize - 1 ) && player.health > 0
+
+
 applyDamage : InnerModel -> InnerModel
 applyDamage ({ player } as innerModel) =
     if player.hasHit == Nothing then
@@ -227,7 +241,7 @@ applyDamage ({ player } as innerModel) =
             entity =
                 List.Extra.find
                     (\{ position, data } ->
-                        position == player.position && isAlive data
+                        position == player.position && isActive data
                     )
                     innerModel.entities
         in
@@ -237,13 +251,19 @@ applyDamage ({ player } as innerModel) =
 
             Just en ->
                 let
-                    ( damage, hasHit, entityName ) =
+                    ( damage, hasHit ) =
                         case en.data of
                             Bat _ ->
-                                ( 1, "Bat", en.name )
+                                ( 1, "Hit a Bat!" )
 
                             Rat _ ->
-                                ( 2, "Rat", en.name )
+                                ( 2, "Hit a Rat!" )
+
+                            Spider ->
+                                ( 3, "Hit a Spider!" )
+
+                            Potion { health } ->
+                                ( -health, "Got a potion (+" ++ String.fromInt health ++ "hp)" )
                 in
                 { innerModel
                     | player =
@@ -253,7 +273,7 @@ applyDamage ({ player } as innerModel) =
                         }
                     , entities =
                         List.Extra.updateIf
-                            (\{ name } -> name == entityName)
+                            (\{ name } -> name == en.name)
                             damageEntity
                             innerModel.entities
                 }
@@ -287,6 +307,12 @@ damageEntity entity =
 
                 Rat { health } ->
                     Rat { health = max 0 <| health - 1 }
+
+                Spider ->
+                    Spider
+
+                Potion _ ->
+                    Potion { health = 0 }
     }
 
 
@@ -297,7 +323,7 @@ moveEnemies innerModel =
             innerModel.entities
                 |> List.foldr
                     (\entity ( acc, seed ) ->
-                        if isAlive entity.data then
+                        if isActive entity.data then
                             let
                                 generator =
                                     case entity.data of
@@ -309,7 +335,7 @@ moveEnemies innerModel =
                                                     )
 
                                         Rat { health } ->
-                                            if health == 1 then
+                                            if health == 2 then
                                                 towardsPlayer innerModel.player entity
 
                                             else
@@ -318,6 +344,12 @@ moveEnemies innerModel =
                                                         (\direction ->
                                                             { entity | position = move direction entity.position }
                                                         )
+
+                                        Spider ->
+                                            Random.constant entity
+
+                                        Potion _ ->
+                                            Random.constant entity
 
                                 ( entity_, seed_ ) =
                                     Random.step generator seed
@@ -414,14 +446,20 @@ moveResult maybeDirection player =
         Moved moved
 
 
-isAlive : EntityData -> Bool
-isAlive data =
+isActive : EntityData -> Bool
+isActive data =
     case data of
         Bat { health } ->
             health > 0
 
         Rat { health } ->
             health > 0
+
+        Potion { health } ->
+            health > 0
+
+        Spider ->
+            True
 
 
 move : Direction -> Position -> Position
@@ -470,8 +508,34 @@ entitiesGenerator =
                 )
                 randomPosition
                 randomRat
+
+        spiders =
+            Random.map2
+                (\position data ->
+                    { position = position
+                    , data = data
+                    }
+                )
+                randomPosition
+                randomSpider
+                |> Random.list 30
+
+        potions =
+            Random.map2
+                (\position data ->
+                    { position = position
+                    , data = data
+                    }
+                )
+                randomPosition
+                randomPotion
+                |> Random.list 12
     in
-    Random.map2 (::) rat randoms
+    Random.map4 (\h t s p -> h :: t ++ s ++ p)
+        rat
+        randoms
+        spiders
+        potions
         |> Random.map
             (List.indexedMap
                 (\i { position, data } ->
@@ -504,6 +568,16 @@ randomBat =
 randomRat : Generator EntityData
 randomRat =
     Random.map (\health -> Rat { health = health }) (Random.int 1 2)
+
+
+randomSpider : Generator EntityData
+randomSpider =
+    Random.constant Spider
+
+
+randomPotion : Generator EntityData
+randomPotion =
+    Random.map (\health -> Potion { health = health }) (Random.int 2 5)
 
 
 tilePositionFromIndex : Int -> Position
@@ -600,27 +674,20 @@ areas ({ player } as innerModel) =
             ( doorPosition, Tile.fromPosition (tilePositionFromIndex 45) )
 
         ( messageTop, messageBottom ) =
-            if player.position == doorPosition then
-                ( "", "You won!" )
+            let
+                format label value =
+                    label ++ String.padLeft (boardSize - String.length label) ' ' value
+            in
+            ( if hasWon player then
+                "You won!"
 
-            else if player.health <= 0 then
-                ( "", "You died!" )
+              else if player.health <= 0 then
+                "You died!"
 
-            else
-                let
-                    format label value =
-                        label ++ String.padLeft (boardSize - String.length label) ' ' value
-                in
-                ( case
-                    player.hasHit
-                  of
-                    Nothing ->
-                        "Get to the door"
-
-                    Just name ->
-                        "Hit a " ++ name ++ "!"
-                , format "Health" <| String.fromInt player.health
-                )
+              else
+                Maybe.withDefault "Get to the door" player.hasHit
+            , format "Health" <| String.fromInt player.health
+            )
 
         berlin : Tileset
         berlin =
@@ -713,24 +780,50 @@ playerToTile { position, health } =
 
 entityToTile : { name : String, position : Position, data : EntityData } -> ( Position, Tile msg )
 entityToTile { name, position, data } =
-    if isAlive data then
-        let
-            index =
-                case data of
-                    Bat _ ->
-                        120
+    let
+        index =
+            case data of
+                Bat { health } ->
+                    if health == 0 then
+                        Nothing
 
-                    Rat { health } ->
-                        if health == 1 then
-                            124
+                    else
+                        Just 120
 
-                        else
-                            123
-        in
-        ( position, Tile.movable name <| Tile.fromPosition <| tilePositionFromIndex index )
+                Rat { health } ->
+                    case health of
+                        0 ->
+                            Nothing
 
-    else
-        ( position, Tile.multipleTiles [] )
+                        1 ->
+                            Just 124
+
+                        _ ->
+                            Just 123
+
+                Spider ->
+                    Just 122
+
+                Potion { health } ->
+                    case health of
+                        2 ->
+                            Just 114
+
+                        3 ->
+                            Just 115
+
+                        0 ->
+                            Just 113
+
+                        _ ->
+                            Just 116
+    in
+    case index of
+        Just i ->
+            ( position, Tile.movable name <| Tile.fromPosition <| tilePositionFromIndex i )
+
+        Nothing ->
+            ( position, Tile.multipleTiles [] )
 
 
 
