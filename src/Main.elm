@@ -82,7 +82,7 @@ type Msg
 
 boardSize : number
 boardSize =
-    16
+    20
 
 
 tileSize : number
