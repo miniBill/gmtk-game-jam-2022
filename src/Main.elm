@@ -39,6 +39,7 @@ type alias InnerModel =
     , size : Size
     , player : Player
     , entities : List Entity
+    , level : Int
     }
 
 
@@ -83,6 +84,7 @@ type Msg
     | SetSeed Seed
     | SetSize Size
     | Nop
+    | NewLevel
 
 
 
@@ -134,24 +136,25 @@ init _ =
     )
 
 
-innerInit : Seed -> Size -> InnerModel
-innerInit seed size =
+innerInit : Seed -> Size -> Int -> InnerModel
+innerInit seed size level =
     let
         player : Player
         player =
             { position = initialPlayerPosition
-            , health = 3
+            , health = 5
             , hasHit = Nothing
             , armed = False
             }
 
         ( entities, newSeed ) =
-            Random.step entitiesGenerator seed
+            Random.step (entitiesGenerator level) seed
     in
     { seed = newSeed
     , size = size
     , player = player
     , entities = entities
+    , level = level
     }
         |> addIntentionToEntities
 
@@ -181,13 +184,13 @@ update msg outerModel =
             ( WaitingSeed size, Cmd.none )
 
         ( SetSeed seed, WaitingSeed size ) ->
-            ( WaitingPlayer <| innerInit seed size, Cmd.none )
+            ( WaitingPlayer <| innerInit seed size 1, Cmd.none )
 
         ( _, WaitingSeed _ ) ->
             ( outerModel, Cmd.none )
 
         ( SetSize size, WaitingSize seed ) ->
-            ( WaitingPlayer <| innerInit seed size, Cmd.none )
+            ( WaitingPlayer <| innerInit seed size 1, Cmd.none )
 
         ( _, WaitingSize _ ) ->
             ( outerModel, Cmd.none )
@@ -216,18 +219,24 @@ update msg outerModel =
                             |> applyDamage
                 in
                 ( WaitingEnemies newModel
-                , if hasWon newModel.player then
-                    Cmd.none
+                , if hasWon newModel.player || newModel.player.health <= 0 then
+                    Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
 
                   else
                     Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.2)
                 )
+
+        ( NewLevel, WaitingPlayer innerModel ) ->
+            ( newLevel innerModel, Cmd.none )
 
         ( MoveEnemies, WaitingPlayer _ ) ->
             ( outerModel, Cmd.none )
 
         ( Move _, WaitingEnemies _ ) ->
             ( outerModel, Cmd.none )
+
+        ( NewLevel, WaitingEnemies innerModel ) ->
+            ( newLevel innerModel, Cmd.none )
 
         ( MoveEnemies, WaitingEnemies innerModel ) ->
             ( innerModel
@@ -237,6 +246,32 @@ update msg outerModel =
                 |> WaitingPlayer
             , Cmd.none
             )
+
+
+newLevel : InnerModel -> OuterModel
+newLevel innerModel =
+    let
+        newModel =
+            if hasWon innerModel.player then
+                innerInit innerModel.seed innerModel.size <| innerModel.level + 1
+
+            else
+                innerInit innerModel.seed innerModel.size 1
+
+        newPlayer =
+            newModel.player
+    in
+    if hasWon innerModel.player then
+        WaitingPlayer
+            { newModel
+                | player =
+                    { newPlayer
+                        | health = max 3 <| innerModel.player.health
+                    }
+            }
+
+    else
+        WaitingPlayer newModel
 
 
 moveEnemies : InnerModel -> InnerModel
@@ -278,35 +313,16 @@ applyDamage ({ player } as innerModel) =
 
             Just en ->
                 let
-                    ( damage, armed, hasHit ) =
-                        case ( player.armed, en.data ) of
-                            ( False, Bat _ ) ->
-                                ( 1, False, "A Bat hit you!" )
+                    ( damage, hasHit ) =
+                        getDamageAndHit player en
 
-                            ( True, Bat _ ) ->
-                                ( 0, False, "Slain a Bat!" )
+                    armed =
+                        case en.data of
+                            Sord _ ->
+                                True
 
-                            ( False, Rat _ ) ->
-                                ( 2, False, "A Rat bit you!" )
-
-                            ( True, Rat { health } ) ->
-                                ( health - 1
-                                , False
-                                , if health == 1 then
-                                    "Slain a Rat!"
-
-                                  else
-                                    "Hit a Rat!"
-                                )
-
-                            ( _, Spider ) ->
-                                ( 2, False, "You got poisoned!" )
-
-                            ( _, Potion { health } ) ->
-                                ( -health, False, "Got a potion (+" ++ String.fromInt health ++ "hp)!" )
-
-                            ( _, Sord _ ) ->
-                                ( 0, True, "Picked up SORD!" )
+                            _ ->
+                                False
                 in
                 { innerModel
                     | player =
@@ -324,6 +340,41 @@ applyDamage ({ player } as innerModel) =
 
     else
         innerModel
+
+
+getDamageAndHit : Player -> Entity -> ( Int, String )
+getDamageAndHit player en =
+    if isActive en.data then
+        case ( player.armed, en.data ) of
+            ( False, Bat _ ) ->
+                ( 2, "A 2 hit you!" )
+
+            ( True, Bat _ ) ->
+                ( 1, "Slain a 1!" )
+
+            ( False, Rat _ ) ->
+                ( 3, "A 3 bit you!" )
+
+            ( True, Rat { health } ) ->
+                ( health
+                , if health == 1 then
+                    "Slain a 1!"
+
+                  else
+                    "Hit a 2!"
+                )
+
+            ( _, Spider ) ->
+                ( 4, "You hit a 4wall!" )
+
+            ( _, Potion { health } ) ->
+                ( -health, "Got a potion (+" ++ String.fromInt health ++ "hp)!" )
+
+            ( _, Sord _ ) ->
+                ( 0, "Picked up SORD!" )
+
+    else
+        ( 0, "" )
 
 
 movePlayer : Maybe Direction -> InnerModel -> InnerModel
@@ -535,8 +586,8 @@ move direction ( x, y ) =
             ( x, y + 1 )
 
 
-entitiesGenerator : Generator (List Entity)
-entitiesGenerator =
+entitiesGenerator : Int -> Generator (List Entity)
+entitiesGenerator level =
     let
         randomEnemyPosition =
             randomPosition <|
@@ -554,15 +605,15 @@ entitiesGenerator =
 
         randoms =
             buildEntity randomEnemy randomEnemyPosition
-                |> Random.list 30
+                |> Random.list (clamp 5 60 <| 5 * level)
 
         spiders =
             buildEntity randomSpider randomEnemyPosition
-                |> Random.list 40
+                |> Random.list (clamp 10 60 <| 10 * level)
 
         potions =
             buildEntity randomPotion randomEnemyPosition
-                |> Random.list 12
+                |> Random.list (clamp 3 10 <| 20 - level)
 
         sord =
             buildEntity randomSord
@@ -570,9 +621,10 @@ entitiesGenerator =
                     \( x, y ) ->
                         (x > boardSize // 4)
                             && (y > boardSize // 4)
-                            && (x < boardSize * 3 // 4)
-                            && (y < boardSize * 3 // 4)
+                            && (x < boardSize // 2)
+                            && (y < boardSize // 2)
                 )
+                |> Random.list (max 1 <| 4 - level)
 
         dedupAndNameEntities raw =
             raw
@@ -618,7 +670,7 @@ entitiesGenerator =
                         }
                     )
     in
-    Random.map4 (\a b c d -> a :: b ++ c ++ d)
+    Random.map4 (\a b c d -> a ++ b ++ c ++ d)
         sord
         randoms
         spiders
@@ -734,7 +786,7 @@ controls input =
 
 
 areas : InnerModel -> List (Area Msg)
-areas ({ player } as innerModel) =
+areas ({ player, level } as innerModel) =
     let
         background : List ( Position, Tile msg )
         background =
@@ -775,8 +827,11 @@ areas ({ player } as innerModel) =
                     (if player.health <= 0 then
                         ""
 
-                     else
+                     else if level == 1 then
                         "Get to the door"
+
+                     else
+                        "Level " ++ String.fromInt level
                     )
                     player.hasHit
             , if player.health <= 0 then
@@ -827,7 +882,7 @@ areas ({ player } as innerModel) =
     , (background
         ++ door
         :: playerToTile player
-        :: List.map entityToTile innerModel.entities
+        :: List.map (entityToTile player) innerModel.entities
       )
         |> PixelEngine.tiledArea
             { rows = boardSize
@@ -874,33 +929,12 @@ playerToTile { position, health, armed } =
     )
 
 
-entityToTile : Entity -> ( Position, Tile msg )
-entityToTile { name, position, data, intention } =
+entityToTile : Player -> Entity -> ( Position, Tile msg )
+entityToTile player ({ name, position, data, intention } as entity) =
     let
         maybeIndex =
-            case data of
-                Bat { health } ->
-                    if health == 0 then
-                        Nothing
-
-                    else
-                        Just 120
-
-                Rat { health } ->
-                    case health of
-                        0 ->
-                            Nothing
-
-                        1 ->
-                            Just 124
-
-                        _ ->
-                            Just 123
-
-                Spider ->
-                    Just 122
-
-                Potion { health } ->
+            case ( data, isActive data ) of
+                ( Potion { health }, _ ) ->
                     case health of
                         0 ->
                             Just 113
@@ -914,13 +948,27 @@ entityToTile { name, position, data, intention } =
                         _ ->
                             Just 114
 
-                Sord { picked, index } ->
-                    if picked then
-                        Nothing
+                ( _, False ) ->
+                    Nothing
 
-                    else
-                        Just index
+                ( Sord { index }, _ ) ->
+                    Just index
 
+                _ ->
+                    Just <| (+) 136 <| Tuple.first <| getDamageAndHit player entity
+
+        -- ( Bat _, True ) ->
+        --     Just 120
+        -- ( Rat { health }, True ) ->
+        --     case health of
+        --         0 ->
+        --             Nothing
+        --         1 ->
+        --             Just 124
+        --         _ ->
+        --             Just 123
+        -- ( Spider, _ ) ->
+        --     Just 122
         tiles =
             [ maybeIndex
             , Maybe.map
