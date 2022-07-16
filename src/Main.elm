@@ -9,6 +9,7 @@ import List.Extra
 import PixelEngine exposing (Area, Input(..))
 import PixelEngine.Options as Options exposing (Options)
 import PixelEngine.Tile as Tile exposing (Tile, Tileset)
+import Process
 import Random exposing (Generator, Seed)
 import Task
 
@@ -29,18 +30,22 @@ type OuterModel
     = Initializing
     | WaitingSize Seed
     | WaitingSeed Size
-    | Playing InnerModel
+    | WaitingPlayer InnerModel
+    | WaitingEnemies InnerModel
 
 
 type alias InnerModel =
     { seed : Seed
     , size : Size
-    , player :
-        { position : Position
-        , health : Int
-        , hasHit : Maybe String
-        }
+    , player : Player
     , entities : List Entity
+    }
+
+
+type alias Player =
+    { position : Position
+    , health : Int
+    , hasHit : Maybe String
     }
 
 
@@ -69,6 +74,7 @@ type Direction
 
 type Msg
     = Move (Maybe Direction)
+    | MoveEnemies
     | SetSeed Seed
     | SetSize Size
     | Nop
@@ -116,11 +122,7 @@ init _ =
 innerInit : Seed -> Size -> InnerModel
 innerInit seed size =
     let
-        player :
-            { position : Position
-            , health : number
-            , hasHit : Maybe String
-            }
+        player : Player
         player =
             { position = ( 0, 0 )
             , health = 10
@@ -151,86 +153,127 @@ innerInit seed size =
 
 update : Msg -> OuterModel -> ( OuterModel, Cmd Msg )
 update msg outerModel =
-    ( case ( msg, outerModel ) of
+    case ( msg, outerModel ) of
         ( Nop, _ ) ->
-            outerModel
+            ( outerModel, Cmd.none )
 
         ( SetSeed seed, Initializing ) ->
-            WaitingSize seed
+            ( WaitingSize seed, Cmd.none )
 
         ( SetSize size, Initializing ) ->
-            WaitingSeed size
+            ( WaitingSeed size, Cmd.none )
 
         ( _, Initializing ) ->
-            outerModel
+            ( outerModel, Cmd.none )
 
         ( SetSize size, WaitingSeed _ ) ->
-            WaitingSeed size
+            ( WaitingSeed size, Cmd.none )
 
         ( SetSeed seed, WaitingSeed size ) ->
-            Playing <| innerInit seed size
+            ( WaitingPlayer <| innerInit seed size, Cmd.none )
 
         ( _, WaitingSeed _ ) ->
-            outerModel
+            ( outerModel, Cmd.none )
 
         ( SetSize size, WaitingSize seed ) ->
-            Playing <| innerInit seed size
+            ( WaitingPlayer <| innerInit seed size, Cmd.none )
 
         ( _, WaitingSize _ ) ->
-            outerModel
+            ( outerModel, Cmd.none )
 
-        ( SetSize size, Playing innerModel ) ->
-            Playing { innerModel | size = size }
+        ( SetSize size, WaitingPlayer innerModel ) ->
+            ( WaitingPlayer { innerModel | size = size }, Cmd.none )
 
-        ( SetSeed _, Playing _ ) ->
-            outerModel
+        ( SetSize size, WaitingEnemies innerModel ) ->
+            ( WaitingEnemies { innerModel | size = size }, Cmd.none )
 
-        ( Move maybeDirection, Playing ({ player } as innerModel) ) ->
+        ( SetSeed _, WaitingPlayer _ ) ->
+            ( outerModel, Cmd.none )
+
+        ( SetSeed _, WaitingEnemies _ ) ->
+            ( outerModel, Cmd.none )
+
+        ( Move maybeDirection, WaitingPlayer ({ player } as innerModel) ) ->
             if player.position == ( boardSize - 1, boardSize - 1 ) || player.health <= 0 then
-                outerModel
+                ( outerModel, Cmd.none )
 
             else
-                innerModel
-                    |> stepEnemies
+                ( { innerModel | player = { player | hasHit = Nothing } }
                     |> movePlayer maybeDirection
-                    |> Playing
-    , Cmd.none
-    )
+                    |> applyDamage
+                    |> WaitingEnemies
+                , Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.2)
+                )
+
+        ( MoveEnemies, WaitingPlayer _ ) ->
+            ( outerModel, Cmd.none )
+
+        ( Move _, WaitingEnemies _ ) ->
+            ( outerModel, Cmd.none )
+
+        ( MoveEnemies, WaitingEnemies innerModel ) ->
+            ( innerModel
+                |> moveEnemies
+                |> applyDamage
+                |> WaitingPlayer
+            , Cmd.none
+            )
+
+
+applyDamage : InnerModel -> InnerModel
+applyDamage ({ player } as innerModel) =
+    if player.hasHit == Nothing then
+        let
+            entity =
+                List.Extra.find
+                    (\{ position, data } ->
+                        position == player.position && isAlive data
+                    )
+                    innerModel.entities
+        in
+        case entity of
+            Nothing ->
+                innerModel
+
+            Just en ->
+                let
+                    ( damage, hasHit, entityName ) =
+                        case en.data of
+                            Bat _ ->
+                                ( 1, "Bat", en.name )
+
+                            Rat _ ->
+                                ( 2, "Rat", en.name )
+                in
+                { innerModel
+                    | player =
+                        { player
+                            | health = player.health - damage
+                            , hasHit = Just hasHit
+                        }
+                    , entities =
+                        List.Extra.updateIf
+                            (\{ name } -> name == entityName)
+                            damageEntity
+                            innerModel.entities
+                }
+
+    else
+        innerModel
 
 
 movePlayer : Maybe Direction -> InnerModel -> InnerModel
 movePlayer maybeDirection ({ player } as innerModel) =
-    case moveResult maybeDirection innerModel of
+    case moveResult maybeDirection player of
         OutOfRange ->
             innerModel
 
-        Moved moved entity ->
-            let
-                ( damage, hasHit, entityName ) =
-                    case entity of
-                        Nothing ->
-                            ( 0, Nothing, Nothing )
-
-                        Just en ->
-                            case en.data of
-                                Bat _ ->
-                                    ( 1, Just "Bat", Just en.name )
-
-                                Rat _ ->
-                                    ( 2, Just "Rat", Just en.name )
-            in
+        Moved moved ->
             { innerModel
                 | player =
                     { player
                         | position = moved
-                        , health = player.health - damage
-                        , hasHit = hasHit
                     }
-                , entities =
-                    List.Extra.updateIf
-                        (\{ name } -> Just name == entityName)
-                        damageEntity
-                        innerModel.entities
             }
 
 
@@ -247,8 +290,8 @@ damageEntity entity =
     }
 
 
-stepEnemies : InnerModel -> InnerModel
-stepEnemies innerModel =
+moveEnemies : InnerModel -> InnerModel
+moveEnemies innerModel =
     let
         ( entities, newSeed ) =
             innerModel.entities
@@ -267,7 +310,7 @@ stepEnemies innerModel =
 
                                         Rat { health } ->
                                             if health == 1 then
-                                                Random.constant entity
+                                                towardsPlayer innerModel.player entity
 
                                             else
                                                 randomDirectionLegalFrom entity.position
@@ -289,22 +332,55 @@ stepEnemies innerModel =
     { innerModel | entities = entities, seed = newSeed }
 
 
+towardsPlayer : Player -> Entity -> Generator Entity
+towardsPlayer player entity =
+    let
+        ( px, py ) =
+            player.position
+
+        ( ex, ey ) =
+            entity.position
+
+        dirs =
+            [ ifTrue (px < ex) Left
+            , ifTrue (px > ex) Right
+            , ifTrue (py < ey) Up
+            , ifTrue (py > ey) Down
+            ]
+                |> List.filterMap identity
+    in
+    case dirs of
+        [] ->
+            Random.constant entity
+
+        h :: t ->
+            Random.map
+                (\direction ->
+                    { entity
+                        | position = move direction entity.position
+                    }
+                )
+                (Random.uniform h t)
+
+
+ifTrue : Bool -> a -> Maybe a
+ifTrue condition value =
+    if condition then
+        Just value
+
+    else
+        Nothing
+
+
 randomDirectionLegalFrom : Position -> Generator Direction
 randomDirectionLegalFrom ( x, y ) =
     let
-        bound condition value =
-            if condition then
-                Just value
-
-            else
-                Nothing
-
         list =
             List.filterMap identity
-                [ bound (x > 0) Left
-                , bound (x < boardSize - 1) Right
-                , bound (y > 0) Up
-                , bound (y < boardSize - 1) Down
+                [ ifTrue (x > 0) Left
+                , ifTrue (x < boardSize - 1) Right
+                , ifTrue (y > 0) Up
+                , ifTrue (y < boardSize - 1) Down
                 ]
     in
     case list of
@@ -317,11 +393,11 @@ randomDirectionLegalFrom ( x, y ) =
 
 type MoveResult
     = OutOfRange
-    | Moved Position (Maybe Entity)
+    | Moved Position
 
 
-moveResult : Maybe Direction -> InnerModel -> MoveResult
-moveResult maybeDirection ({ player } as innerModel) =
+moveResult : Maybe Direction -> Player -> MoveResult
+moveResult maybeDirection player =
     let
         (( x, y ) as moved) =
             case maybeDirection of
@@ -335,15 +411,7 @@ moveResult maybeDirection ({ player } as innerModel) =
         OutOfRange
 
     else
-        let
-            entity =
-                List.Extra.find
-                    (\{ position, data } ->
-                        position == moved && isAlive data
-                    )
-                    innerModel.entities
-        in
-        Moved moved entity
+        Moved moved
 
 
 isAlive : EntityData -> Bool
@@ -685,33 +753,41 @@ view outerModel =
     { title = "Roll2Die"
     , body =
         case outerModel of
-            Playing innerModel ->
-                let
-                    scale : Int
-                    scale =
-                        floor <|
-                            min
-                                (toFloat (innerModel.size.width - 2 * margin)
-                                    / (boardSize * tileSize)
-                                )
-                                (toFloat (innerModel.size.height - 2 * margin)
-                                    / ((boardSize + textLines) * tileSize)
-                                )
+            WaitingPlayer innerModel ->
+                viewInner innerModel
 
-                    margin : number
-                    margin =
-                        20
-                in
-                [ PixelEngine.toHtml
-                    { width = boardSize * tileSize
-                    , options = Just (options scale)
-                    }
-                    (areas innerModel)
-                ]
+            WaitingEnemies innerModel ->
+                viewInner innerModel
 
             _ ->
                 [ Html.text "Initializing..." ]
     }
+
+
+viewInner : InnerModel -> List (Html Msg)
+viewInner innerModel =
+    let
+        scale : Int
+        scale =
+            floor <|
+                min
+                    (toFloat (innerModel.size.width - 2 * margin)
+                        / (boardSize * tileSize)
+                    )
+                    (toFloat (innerModel.size.height - 2 * margin)
+                        / ((boardSize + textLines) * tileSize)
+                    )
+
+        margin : number
+        margin =
+            20
+    in
+    [ PixelEngine.toHtml
+        { width = boardSize * tileSize
+        , options = Just (options scale)
+        }
+        (areas innerModel)
+    ]
 
 
 main : Program () OuterModel Msg
