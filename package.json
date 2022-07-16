@@ -10,6 +10,6 @@
 	},
 	"scripts": {
 		"start": "PARCEL_ELM_NO_DEBUG=1 parcel src/index.html",
-		"build": "parcel build src/index.html"
+		"build": "rm -r dist; parcel build src/index.html; rm dist/*.tsx dist/*.map; cd dist; zip Game.zip *"
 	}
 }
