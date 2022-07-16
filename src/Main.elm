@@ -238,24 +238,28 @@ update msg outerModel =
             ( outerModel, Cmd.none )
 
         ( Move direction, WaitingEnemies innerModel ) ->
-            let
-                newModel =
-                    innerModel
-                        |> moveEnemies
-                        |> applyDamage
-                        |> addIntentionToEntities
+            if hasWon innerModel.player || innerModel.player.health <= 0 then
+                ( outerModel, Cmd.none )
 
-                ( result, cmd1 ) =
-                    update (Move direction) <| WaitingPlayer newModel
+            else
+                let
+                    newModel =
+                        innerModel
+                            |> moveEnemies
+                            |> applyDamage
+                            |> addIntentionToEntities
 
-                cmd2 =
-                    if newModel.player.health <= 0 then
-                        Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
+                    ( result, cmd1 ) =
+                        update (Move direction) <| WaitingPlayer newModel
 
-                    else
-                        Cmd.none
-            in
-            ( result, Cmd.batch [ cmd1, cmd2 ] )
+                    cmd2 =
+                        if newModel.player.health <= 0 then
+                            Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
+
+                        else
+                            Cmd.none
+                in
+                ( result, Cmd.batch [ cmd1, cmd2 ] )
 
         ( NewLevel, WaitingEnemies innerModel ) ->
             ( newLevel innerModel, Cmd.none )
