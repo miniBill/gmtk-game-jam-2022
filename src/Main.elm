@@ -46,6 +46,7 @@ type alias Player =
     { position : Position
     , health : Int
     , hasHit : Maybe String
+    , armed : Bool
     }
 
 
@@ -62,6 +63,7 @@ type EntityData
     | Rat { health : Int }
     | Spider
     | Potion { health : Int }
+    | Sord { picked : Bool, index : Int }
 
 
 type alias Position =
@@ -140,6 +142,7 @@ innerInit seed size =
             { position = initialPlayerPosition
             , health = 3
             , hasHit = Nothing
+            , armed = False
             }
 
         ( entities, newSeed ) =
@@ -275,31 +278,42 @@ applyDamage ({ player } as innerModel) =
 
             Just en ->
                 let
-                    ( damage, hasHit ) =
-                        case en.data of
-                            Bat _ ->
-                                ( 0, "Slain a Bat!" )
+                    ( damage, armed, hasHit ) =
+                        case ( player.armed, en.data ) of
+                            ( False, Bat _ ) ->
+                                ( 1, False, "A Bat hit you!" )
 
-                            Rat { health } ->
+                            ( True, Bat _ ) ->
+                                ( 0, False, "Slain a Bat!" )
+
+                            ( False, Rat _ ) ->
+                                ( 2, False, "A Rat hit you!" )
+
+                            ( True, Rat { health } ) ->
                                 ( health - 1
+                                , False
                                 , if health == 1 then
                                     "Slain a Rat!"
 
                                   else
-                                    "A Rat bit you!"
+                                    "Hit a Rat!"
                                 )
 
-                            Spider ->
-                                ( 2, "You got poisoned!" )
+                            ( _, Spider ) ->
+                                ( 2, False, "You got poisoned!" )
 
-                            Potion { health } ->
-                                ( -health, "Got a potion (+" ++ String.fromInt health ++ "hp)" )
+                            ( _, Potion { health } ) ->
+                                ( -health, False, "Got a potion (+" ++ String.fromInt health ++ "hp)" )
+
+                            ( _, Sord _ ) ->
+                                ( 0, True, "Picked up SORD" )
                 in
                 { innerModel
                     | player =
                         { player
                             | health = player.health - damage
                             , hasHit = Just hasHit
+                            , armed = player.armed || armed
                         }
                     , entities =
                         List.Extra.updateIf
@@ -343,6 +357,9 @@ damageEntity entity =
 
                 Potion _ ->
                     Potion { health = 0 }
+
+                Sord s ->
+                    Sord { s | picked = True }
     }
 
 
@@ -378,6 +395,9 @@ addIntentionToEntity player entity =
                     Random.constant Nothing
 
                 ( True, Potion _ ) ->
+                    Random.constant Nothing
+
+                ( True, Sord _ ) ->
                     Random.constant Nothing
 
                 ( False, _ ) ->
@@ -492,6 +512,9 @@ isActive data =
         Potion { health } ->
             health > 0
 
+        Sord { picked } ->
+            not picked
+
         Spider ->
             True
 
@@ -516,58 +539,72 @@ entitiesGenerator : Generator (List Entity)
 entitiesGenerator =
     let
         randomEnemyPosition =
-            randomPosition <| \( x, y ) -> (x > 4 || y > 4) && ( x, y ) /= doorPosition
+            randomPosition <|
+                \( x, y ) ->
+                    (x > 4 || y > 4)
+                        && (x < boardSize - 2 || y < boardSize - 2)
 
-        randoms =
+        buildEntity =
             Random.map2
-                (\position data ->
-                    { position = position
-                    , data = data
+                (\data position ->
+                    { data = data
+                    , position = position
                     }
                 )
-                randomEnemyPosition
-                randomEnemy
+
+        randoms =
+            buildEntity randomEnemy randomEnemyPosition
                 |> Random.list 30
 
         spiders =
-            Random.map2
-                (\position data ->
-                    { position = position
-                    , data = data
-                    }
-                )
-                randomEnemyPosition
-                randomSpider
+            buildEntity randomSpider randomEnemyPosition
                 |> Random.list 40
 
         potions =
-            Random.map2
-                (\position data ->
-                    { position = position
-                    , data = data
-                    }
-                )
-                randomEnemyPosition
-                randomPotion
+            buildEntity randomPotion randomEnemyPosition
                 |> Random.list 12
+
+        sord =
+            buildEntity randomSord (randomPosition <| \( x, y ) -> x < 6 && y < 6)
+
+        dedupAndNameEntities raw =
+            raw
+                |> List.Extra.gatherEqualsBy .position
+                |> List.map
+                    (\( h, t ) ->
+                        List.Extra.find
+                            (\{ data } ->
+                                case data of
+                                    Sord _ ->
+                                        True
+
+                                    _ ->
+                                        False
+                            )
+                            (h :: t)
+                            |> Maybe.withDefault h
+                    )
+                |> List.indexedMap
+                    (\i { position, data } ->
+                        { position = position
+                        , data = data
+                        , intention = Nothing
+                        , name = "Enemy " ++ String.fromInt i
+                        }
+                    )
     in
-    Random.map3 (\h s p -> h ++ s ++ p)
+    Random.map4 (\a b c d -> a :: b ++ c ++ d)
+        sord
         randoms
         spiders
         potions
-        |> Random.map
-            (\raw ->
-                raw
-                    |> List.Extra.uniqueBy .position
-                    |> List.indexedMap
-                        (\i { position, data } ->
-                            { position = position
-                            , data = data
-                            , intention = Nothing
-                            , name = "Enemy " ++ String.fromInt i
-                            }
-                        )
-            )
+        |> Random.map dedupAndNameEntities
+
+
+randomSord : Generator EntityData
+randomSord =
+    Random.map (\index -> Sord { picked = False, index = index })
+        (Random.uniform 103 [ 104, 105, 106, 107, 117, 118, 119 ])
 
 
 randomPosition : (Position -> Bool) -> Generator Position
@@ -794,19 +831,18 @@ tilesFromText ( dx, dy ) text =
             )
 
 
-playerToTile :
-    { a
-        | position : Position
-        , health : Int
-    }
-    -> ( Position, Tile msg )
-playerToTile { position, health } =
+playerToTile : Player -> ( Position, Tile msg )
+playerToTile { position, health, armed } =
     ( position
     , Tile.movable "player" <|
         Tile.fromPosition <|
             tilePositionFromIndex <|
                 if health > 0 then
-                    99
+                    if armed then
+                        96
+
+                    else
+                        99
 
                 else
                     121
@@ -816,7 +852,7 @@ playerToTile { position, health } =
 entityToTile : Entity -> ( Position, Tile msg )
 entityToTile { name, position, data, intention } =
     let
-        index =
+        maybeIndex =
             case data of
                 Bat { health } ->
                     if health == 0 then
@@ -853,8 +889,15 @@ entityToTile { name, position, data, intention } =
                         _ ->
                             Just 114
 
+                Sord { picked, index } ->
+                    if picked then
+                        Nothing
+
+                    else
+                        Just index
+
         tiles =
-            [ index
+            [ maybeIndex
             , Maybe.map
                 (\direction ->
                     case direction of
