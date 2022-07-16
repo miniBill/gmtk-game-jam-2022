@@ -1,9 +1,11 @@
 module Main exposing (Msg, OuterModel, main)
 
-import Browser
 import Browser.Dom
 import Browser.Events
 import Color
+import Gamepad exposing (Gamepad)
+import Gamepad.Simple
+import GamepadPort
 import Html exposing (Html)
 import List.Extra
 import PixelEngine exposing (Area, Input(..))
@@ -84,6 +86,7 @@ type Direction
 
 type Msg
     = Move (Maybe Direction)
+    | Gamepad Direction
     | MoveEnemies
     | SetSeed Seed
     | SetSize Size
@@ -231,6 +234,26 @@ update msg outerModel =
                     Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.1)
                 )
 
+        ( Gamepad direction, WaitingPlayer ({ player } as innerModel) ) ->
+            if hasWon player || player.health <= 0 then
+                ( outerModel, Cmd.none )
+
+            else
+                let
+                    newModel : InnerModel
+                    newModel =
+                        { innerModel | player = { player | hit = Nothing } }
+                            |> movePlayer (Just direction)
+                            |> applyDamage
+                in
+                ( WaitingEnemies newModel
+                , if hasWon newModel.player || newModel.player.health <= 0 then
+                    Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
+
+                  else
+                    Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.1)
+                )
+
         ( NewLevel, WaitingPlayer innerModel ) ->
             ( newLevel innerModel, Cmd.none )
 
@@ -261,6 +284,9 @@ update msg outerModel =
                 in
                 ( result, Cmd.batch [ cmd1, cmd2 ] )
 
+        ( Gamepad _, WaitingEnemies _ ) ->
+            ( outerModel, Cmd.none )
+
         ( NewLevel, WaitingEnemies innerModel ) ->
             ( newLevel innerModel, Cmd.none )
 
@@ -279,6 +305,24 @@ update msg outerModel =
               else
                 Cmd.none
             )
+
+
+gamepadToDirection : Gamepad -> Maybe Direction
+gamepadToDirection gamepad =
+    if Gamepad.isPressed gamepad Gamepad.DpadLeft then
+        Just Left
+
+    else if Gamepad.isPressed gamepad Gamepad.DpadRight then
+        Just Right
+
+    else if Gamepad.isPressed gamepad Gamepad.DpadUp then
+        Just Up
+
+    else if Gamepad.isPressed gamepad Gamepad.DpadDown then
+        Just Down
+
+    else
+        Nothing
 
 
 newLevel : InnerModel -> OuterModel
@@ -1103,11 +1147,37 @@ viewInner innerModel =
     ]
 
 
-main : Program () OuterModel Msg
+main : Gamepad.Simple.Program () OuterModel Msg
 main =
-    Browser.document
+    Gamepad.Simple.document
+        config
         { init = init
         , update = update
         , subscriptions = subscriptions
         , view = view
         }
+
+
+config : Gamepad.Simple.Config Msg
+config =
+    { onBlob = GamepadPort.onBlob
+    , saveToLocalStorage = GamepadPort.saveToLocalStorage
+    , onAnimationFrame =
+        \frameData ->
+            case
+                frameData.gamepads
+                    |> List.head
+                    |> Maybe.andThen gamepadToDirection
+            of
+                Nothing ->
+                    Nop
+
+                Just direction ->
+                    Gamepad direction
+    , controls =
+        [ ( "Left", Gamepad.DpadLeft )
+        , ( "Right", Gamepad.DpadRight )
+        , ( "Up", Gamepad.DpadUp )
+        , ( "Down", Gamepad.DpadDown )
+        ]
+    }

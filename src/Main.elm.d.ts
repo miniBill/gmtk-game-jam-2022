@@ -7,5 +7,12 @@ export type ElmType = {
 };
 
 export type MainInstance = {
-  ports: {};
+  ports: {
+    saveToLocalStorage: {
+      subscribe: (callback: (userMappings: any) => void) => void;
+    };
+    onBlob: {
+      send: (blob: any) => void;
+    };
+  };
 };
