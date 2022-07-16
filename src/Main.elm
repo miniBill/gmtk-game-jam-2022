@@ -851,7 +851,7 @@ areas ({ player, level } as innerModel) =
                     label ++ String.padLeft (boardSize - String.length label) ' ' value
             in
             ( if hasWon player then
-                "You won!"
+                "You won the roll!"
 
               else
                 Maybe.withDefault
@@ -866,7 +866,7 @@ areas ({ player, level } as innerModel) =
                     )
                     player.hasHit
             , if player.health <= 0 then
-                "You died!"
+                "You got diced!"
 
               else
                 format "Health" <| String.fromInt <| max 0 player.health
