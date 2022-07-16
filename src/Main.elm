@@ -228,7 +228,7 @@ update msg outerModel =
                     Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
 
                   else
-                    Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.2)
+                    Task.perform (\_ -> MoveEnemies) <| Process.sleep (1000 * 0.1)
                 )
 
         ( NewLevel, WaitingPlayer innerModel ) ->
@@ -237,19 +237,43 @@ update msg outerModel =
         ( MoveEnemies, WaitingPlayer _ ) ->
             ( outerModel, Cmd.none )
 
-        ( Move _, WaitingEnemies _ ) ->
-            ( outerModel, Cmd.none )
+        ( Move direction, WaitingEnemies innerModel ) ->
+            let
+                newModel =
+                    innerModel
+                        |> moveEnemies
+                        |> applyDamage
+                        |> addIntentionToEntities
+
+                ( result, cmd1 ) =
+                    update (Move direction) <| WaitingPlayer newModel
+
+                cmd2 =
+                    if newModel.player.health <= 0 then
+                        Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
+
+                    else
+                        Cmd.none
+            in
+            ( result, Cmd.batch [ cmd1, cmd2 ] )
 
         ( NewLevel, WaitingEnemies innerModel ) ->
             ( newLevel innerModel, Cmd.none )
 
         ( MoveEnemies, WaitingEnemies innerModel ) ->
-            ( innerModel
-                |> moveEnemies
-                |> applyDamage
-                |> addIntentionToEntities
-                |> WaitingPlayer
-            , Cmd.none
+            let
+                newModel =
+                    innerModel
+                        |> moveEnemies
+                        |> applyDamage
+                        |> addIntentionToEntities
+            in
+            ( WaitingPlayer newModel
+            , if newModel.player.health <= 0 then
+                Task.perform (\_ -> NewLevel) <| Process.sleep (1000 * 2)
+
+              else
+                Cmd.none
             )
 
 
@@ -1035,7 +1059,7 @@ entityToTile player ({ name, position, data, intention } as entity) =
 options : Int -> Options Msg
 options scale =
     Options.default
-        |> Options.withMovementSpeed 0.2
+        |> Options.withMovementSpeed 0.1
         |> Options.withScale scale
 
 
