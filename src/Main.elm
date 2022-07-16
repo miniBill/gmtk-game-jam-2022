@@ -838,35 +838,31 @@ areas ({ player, level } as innerModel) =
         background : List ( Position, Tile msg )
         background =
             List.range 0 (boardSize - 1)
-                |> List.concatMap
-                    (\x ->
-                        List.range 0 (boardSize - 1)
-                            |> List.map
-                                (\y ->
-                                    backgroundTile x y
-                                )
+                |> List.foldl
+                    (\x ( acc, seed ) ->
+                        let
+                            ( fx, seed_ ) =
+                                List.range 0 (boardSize - 1)
+                                    |> randomMap seed
+                                        (\y ->
+                                            backgroundTile x y
+                                        )
+                        in
+                        ( fx ++ acc, seed_ )
                     )
+                    ( [], Random.initialSeed level )
+                |> Tuple.first
 
-        backgroundTile : Int -> Int -> ( ( Int, Int ), Tile msg )
+        backgroundTile : Int -> Int -> Generator ( Position, Tile msg )
         backgroundTile x y =
-            ( ( x, y )
-            , Tile.fromPosition
-                (tilePositionFromIndex
-                    (if
-                        (Tuple.first <|
-                            Random.step
-                                (Random.int 0 10)
-                                (Random.initialSeed <| x + y * boardSize)
+            Random.weighted ( 4, 0 ) [ ( 3, 1 ) ]
+                |> Random.map
+                    (\r ->
+                        ( ( x, y )
+                        , Tile.fromPosition
+                            (tilePositionFromIndex r)
                         )
-                            < 4
-                     then
-                        0
-
-                     else
-                        1
                     )
-                )
-            )
 
         door : ( Position, Tile msg )
         door =
