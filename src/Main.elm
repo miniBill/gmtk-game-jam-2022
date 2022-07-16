@@ -138,7 +138,7 @@ innerInit seed size =
         player : Player
         player =
             { position = initialPlayerPosition
-            , health = 10
+            , health = 3
             , hasHit = Nothing
             }
 
@@ -278,13 +278,19 @@ applyDamage ({ player } as innerModel) =
                     ( damage, hasHit ) =
                         case en.data of
                             Bat _ ->
-                                ( 1, "Hit a Bat!" )
+                                ( 0, "Slain a Bat!" )
 
-                            Rat _ ->
-                                ( 2, "Hit a Rat!" )
+                            Rat { health } ->
+                                ( health - 1
+                                , if health == 1 then
+                                    "Slain a Rat!"
+
+                                  else
+                                    "A Rat bit you!"
+                                )
 
                             Spider ->
-                                ( 3, "Hit a Spider!" )
+                                ( 2, "You got poisoned!" )
 
                             Potion { health } ->
                                 ( -health, "Got a potion (+" ++ String.fromInt health ++ "hp)" )
@@ -357,14 +363,16 @@ addIntentionToEntity player entity =
         directionGenerator =
             case ( isActive entity.data, entity.data ) of
                 ( True, Bat _ ) ->
-                    Random.map Just <| randomDirectionLegalFrom entity.position
+                    Random.andThen identity <|
+                        Random.weighted
+                            ( 1, towardsPlayer player entity )
+                            [ ( 3, Random.map Just <| randomDirectionLegalFrom entity.position ) ]
 
                 ( True, Rat { health } ) ->
-                    if health == 2 then
-                        towardsPlayer player entity
-
-                    else
-                        Random.map Just <| randomDirectionLegalFrom entity.position
+                    Random.andThen identity <|
+                        Random.weighted
+                            ( 1 + toFloat health, towardsPlayer player entity )
+                            [ ( 1, Random.map Just <| randomDirectionLegalFrom entity.position ) ]
 
                 ( True, Spider ) ->
                     Random.constant Nothing
@@ -600,7 +608,7 @@ randomSpider =
 
 randomPotion : Generator EntityData
 randomPotion =
-    Random.map (\health -> Potion { health = health }) (Random.int 2 5)
+    Random.map (\health -> Potion { health = health }) (Random.int 1 3)
 
 
 tilePositionFromIndex : Int -> Position
@@ -700,12 +708,20 @@ areas ({ player } as innerModel) =
             ( if hasWon player then
                 "You won!"
 
-              else if player.health <= 0 then
+              else
+                Maybe.withDefault
+                    (if player.health <= 0 then
+                        ""
+
+                     else
+                        "Get to the door"
+                    )
+                    player.hasHit
+            , if player.health <= 0 then
                 "You died!"
 
               else
-                Maybe.withDefault "Get to the door" player.hasHit
-            , format "Health" <| String.fromInt player.health
+                format "Health" <| String.fromInt <| max 0 player.health
             )
 
         berlin : Tileset
@@ -825,17 +841,17 @@ entityToTile { name, position, data, intention } =
 
                 Potion { health } ->
                     case health of
-                        2 ->
-                            Just 114
-
-                        3 ->
-                            Just 115
-
                         0 ->
                             Just 113
 
-                        _ ->
+                        1 ->
+                            Just 115
+
+                        2 ->
                             Just 116
+
+                        _ ->
+                            Just 114
 
         tiles =
             [ index
