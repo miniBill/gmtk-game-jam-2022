@@ -46,9 +46,13 @@ type alias InnerModel =
 type alias Player =
     { position : Position
     , health : Int
-    , hasHit : Maybe String
+    , hit : Maybe Hit
     , armed : Bool
     }
+
+
+type alias Hit =
+    ( Int, String )
 
 
 type alias Entity =
@@ -143,7 +147,7 @@ innerInit seed size level =
         player =
             { position = initialPlayerPosition
             , health = 5
-            , hasHit = Nothing
+            , hit = Nothing
             , armed = False
             }
 
@@ -215,7 +219,7 @@ update msg outerModel =
                 let
                     newModel : InnerModel
                     newModel =
-                        { innerModel | player = { player | hasHit = Nothing } }
+                        { innerModel | player = { player | hit = Nothing } }
                             |> movePlayer maybeDirection
                             |> applyDamage
                 in
@@ -302,7 +306,7 @@ hasWon player =
 
 applyDamage : InnerModel -> InnerModel
 applyDamage ({ player } as innerModel) =
-    if player.hasHit == Nothing then
+    if player.hit == Nothing then
         let
             entity : Maybe Entity
             entity =
@@ -318,8 +322,8 @@ applyDamage ({ player } as innerModel) =
 
             Just en ->
                 let
-                    ( damage, hasHit ) =
-                        getDamageAndHit player en
+                    hit =
+                        getHit player en
 
                     armed : Bool
                     armed =
@@ -333,8 +337,8 @@ applyDamage ({ player } as innerModel) =
                 { innerModel
                     | player =
                         { player
-                            | health = clamp 0 9 <| player.health - damage
-                            , hasHit = Just hasHit
+                            | health = clamp 0 9 <| player.health - Tuple.first hit
+                            , hit = Just hit
                             , armed = player.armed || armed
                         }
                     , entities =
@@ -348,8 +352,8 @@ applyDamage ({ player } as innerModel) =
         innerModel
 
 
-getDamageAndHit : Player -> Entity -> ( Int, String )
-getDamageAndHit player en =
+getHit : Player -> Entity -> Hit
+getHit player en =
     if isActive en.data then
         case ( player.armed, en.data ) of
             ( False, Bat _ ) ->
@@ -844,33 +848,47 @@ areas ({ player, level } as innerModel) =
         door =
             ( doorPosition, Tile.fromPosition (tilePositionFromIndex 2) )
 
-        ( messageTop, messageBottom ) =
+        messageTop =
+            if hasWon player then
+                "You won the roll!"
+
+            else
+                case player.hit of
+                    Just ( _, message ) ->
+                        message
+
+                    Nothing ->
+                        if player.health <= 0 then
+                            ""
+
+                        else if level == 1 then
+                            "Get to the door"
+
+                        else
+                            "Level " ++ String.fromInt level
+
+        messageBottom =
             let
                 format : String -> String -> String
                 format label value =
                     label ++ String.padLeft (boardSize - String.length label) ' ' value
+
+                emptys =
+                    case player.hit of
+                        Nothing ->
+                            ""
+
+                        Just ( hitCount, _ ) ->
+                            String.repeat hitCount "`"
+
+                fulls =
+                    String.repeat (max 0 player.health) "\u{007F}"
             in
-            ( if hasWon player then
-                "You won the roll!"
-
-              else
-                Maybe.withDefault
-                    (if player.health <= 0 then
-                        ""
-
-                     else if level == 1 then
-                        "Get to the door"
-
-                     else
-                        "Level " ++ String.fromInt level
-                    )
-                    player.hasHit
-            , if player.health <= 0 then
+            if player.health <= 0 then
                 "You got diced!"
 
-              else
-                format "Health" <| String.fromInt <| max 0 player.health
-            )
+            else
+                format "Health" <| emptys ++ fulls
 
         berlin : Tileset
         berlin =
@@ -890,25 +908,13 @@ areas ({ player, level } as innerModel) =
         |> PixelEngine.tiledArea
             { rows = 1
             , tileset = berlin
-            , background =
-                PixelEngine.colorBackground <|
-                    if String.isEmpty messageTop then
-                        Color.black
-
-                    else
-                        Color.white
+            , background = PixelEngine.colorBackground <| Color.black
             }
     , tilesFromText ( 0, 0 ) messageBottom
         |> PixelEngine.tiledArea
             { rows = 1
             , tileset = berlin
-            , background =
-                PixelEngine.colorBackground <|
-                    if String.isEmpty messageBottom then
-                        Color.black
-
-                    else
-                        Color.white
+            , background = PixelEngine.colorBackground <| Color.black
             }
     , (background
         ++ door
@@ -988,7 +994,7 @@ entityToTile player ({ name, position, data, intention } as entity) =
                     Just index
 
                 _ ->
-                    Just <| (+) 15 <| Tuple.first <| getDamageAndHit player entity
+                    Just <| (+) 15 <| Tuple.first <| getHit player entity
 
         tiles : List (Maybe Int)
         tiles =
