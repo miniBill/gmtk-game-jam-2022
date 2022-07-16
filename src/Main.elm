@@ -53,6 +53,7 @@ type alias Entity =
     { name : String
     , position : Position
     , data : EntityData
+    , intention : Maybe Direction
     }
 
 
@@ -98,6 +99,16 @@ tileSize =
     16
 
 
+doorPosition : Position
+doorPosition =
+    ( boardSize - 1, boardSize - 1 )
+
+
+initialPlayerPosition : ( Int, Int )
+initialPlayerPosition =
+    ( 0, 0 )
+
+
 
 {------------------------
     INIT
@@ -126,7 +137,7 @@ innerInit seed size =
     let
         player : Player
         player =
-            { position = ( 0, 0 )
+            { position = initialPlayerPosition
             , health = 10
             , hasHit = Nothing
             }
@@ -137,14 +148,9 @@ innerInit seed size =
     { seed = newSeed
     , size = size
     , player = player
-    , entities =
-        List.filter
-            (\{ position } ->
-                (position /= player.position)
-                    && (position /= ( boardSize - 1, boardSize - 1 ))
-            )
-            entities
+    , entities = entities
     }
+        |> addIntentionToEntities
 
 
 
@@ -224,9 +230,27 @@ update msg outerModel =
             ( innerModel
                 |> moveEnemies
                 |> applyDamage
+                |> addIntentionToEntities
                 |> WaitingPlayer
             , Cmd.none
             )
+
+
+moveEnemies : InnerModel -> InnerModel
+moveEnemies innerModel =
+    { innerModel
+        | entities =
+            List.map
+                (\entity ->
+                    case entity.intention of
+                        Nothing ->
+                            entity
+
+                        Just direction ->
+                            { entity | position = move direction entity.position }
+                )
+                innerModel.entities
+    }
 
 
 hasWon : Player -> Bool
@@ -316,55 +340,63 @@ damageEntity entity =
     }
 
 
-moveEnemies : InnerModel -> InnerModel
-moveEnemies innerModel =
+addIntentionToEntities : InnerModel -> InnerModel
+addIntentionToEntities innerModel =
     let
         ( entities, newSeed ) =
-            innerModel.entities
-                |> List.foldr
-                    (\entity ( acc, seed ) ->
-                        if isActive entity.data then
-                            let
-                                generator =
-                                    case entity.data of
-                                        Bat _ ->
-                                            randomDirectionLegalFrom entity.position
-                                                |> Random.map
-                                                    (\direction ->
-                                                        { entity | position = move direction entity.position }
-                                                    )
-
-                                        Rat { health } ->
-                                            if health == 2 then
-                                                towardsPlayer innerModel.player entity
-
-                                            else
-                                                randomDirectionLegalFrom entity.position
-                                                    |> Random.map
-                                                        (\direction ->
-                                                            { entity | position = move direction entity.position }
-                                                        )
-
-                                        Spider ->
-                                            Random.constant entity
-
-                                        Potion _ ->
-                                            Random.constant entity
-
-                                ( entity_, seed_ ) =
-                                    Random.step generator seed
-                            in
-                            ( entity_ :: acc, seed_ )
-
-                        else
-                            ( entity :: acc, seed )
-                    )
-                    ( [], innerModel.seed )
+            randomMap innerModel.seed
+                (addIntentionToEntity innerModel.player)
+                innerModel.entities
     in
     { innerModel | entities = entities, seed = newSeed }
 
 
-towardsPlayer : Player -> Entity -> Generator Entity
+addIntentionToEntity : Player -> Entity -> Generator Entity
+addIntentionToEntity player entity =
+    let
+        directionGenerator =
+            case ( isActive entity.data, entity.data ) of
+                ( True, Bat _ ) ->
+                    Random.map Just <| randomDirectionLegalFrom entity.position
+
+                ( True, Rat { health } ) ->
+                    if health == 2 then
+                        towardsPlayer player entity
+
+                    else
+                        Random.map Just <| randomDirectionLegalFrom entity.position
+
+                ( True, Spider ) ->
+                    Random.constant Nothing
+
+                ( True, Potion _ ) ->
+                    Random.constant Nothing
+
+                ( False, _ ) ->
+                    Random.constant Nothing
+    in
+    Random.map
+        (\direction ->
+            { entity | intention = direction }
+        )
+        directionGenerator
+
+
+randomMap : Seed -> (a -> Generator b) -> List a -> ( List b, Seed )
+randomMap seed f list =
+    List.foldr
+        (\x ( acc, accSeed ) ->
+            let
+                ( fx, newSeed ) =
+                    Random.step (f x) accSeed
+            in
+            ( fx :: acc, newSeed )
+        )
+        ( [], seed )
+        list
+
+
+towardsPlayer : Player -> Entity -> Generator (Maybe Direction)
 towardsPlayer player entity =
     let
         ( px, py ) =
@@ -383,16 +415,10 @@ towardsPlayer player entity =
     in
     case dirs of
         [] ->
-            Random.constant entity
+            Random.constant Nothing
 
         h :: t ->
-            Random.map
-                (\direction ->
-                    { entity
-                        | position = move direction entity.position
-                    }
-                )
-                (Random.uniform h t)
+            Random.map Just <| Random.uniform h t
 
 
 ifTrue : Bool -> a -> Maybe a
@@ -478,16 +504,12 @@ move direction ( x, y ) =
             ( x, y + 1 )
 
 
-entitiesGenerator :
-    Generator
-        (List
-            { position : ( Int, Int )
-            , name : String
-            , data : EntityData
-            }
-        )
+entitiesGenerator : Generator (List Entity)
 entitiesGenerator =
     let
+        randomEnemyPosition =
+            randomPosition <| \( x, y ) -> (x > 4 || y > 4) && ( x, y ) /= doorPosition
+
         randoms =
             Random.map2
                 (\position data ->
@@ -495,19 +517,9 @@ entitiesGenerator =
                     , data = data
                     }
                 )
-                randomPosition
-                randomEntity
+                randomEnemyPosition
+                randomEnemy
                 |> Random.list 30
-
-        rat =
-            Random.map2
-                (\position data ->
-                    { position = position
-                    , data = data
-                    }
-                )
-                randomPosition
-                randomRat
 
         spiders =
             Random.map2
@@ -516,9 +528,9 @@ entitiesGenerator =
                     , data = data
                     }
                 )
-                randomPosition
+                randomEnemyPosition
                 randomSpider
-                |> Random.list 30
+                |> Random.list 40
 
         potions =
             Random.map2
@@ -527,12 +539,11 @@ entitiesGenerator =
                     , data = data
                     }
                 )
-                randomPosition
+                randomEnemyPosition
                 randomPotion
                 |> Random.list 12
     in
-    Random.map4 (\h t s p -> h :: t ++ s ++ p)
-        rat
+    Random.map3 (\h s p -> h ++ s ++ p)
         randoms
         spiders
         potions
@@ -541,21 +552,30 @@ entitiesGenerator =
                 (\i { position, data } ->
                     { position = position
                     , data = data
+                    , intention = Nothing
                     , name = "Enemy " ++ String.fromInt i
                     }
                 )
             )
 
 
-randomPosition : Generator Position
-randomPosition =
+randomPosition : (Position -> Bool) -> Generator Position
+randomPosition accept =
     Random.map2 Tuple.pair
         (Random.int 0 (boardSize - 1))
         (Random.int 0 (boardSize - 1))
+        |> Random.andThen
+            (\pos ->
+                if accept pos then
+                    Random.constant pos
+
+                else
+                    Random.lazy (\_ -> randomPosition accept)
+            )
 
 
-randomEntity : Generator EntityData
-randomEntity =
+randomEnemy : Generator EntityData
+randomEnemy =
     Random.weighted ( 5, randomBat ) [ ( 1, randomRat ) ]
         |> Random.andThen identity
 
@@ -664,10 +684,6 @@ areas ({ player } as innerModel) =
                                     )
                                 )
                     )
-
-        doorPosition : Position
-        doorPosition =
-            ( boardSize - 1, boardSize - 1 )
 
         door : ( Position, Tile msg )
         door =
@@ -778,8 +794,8 @@ playerToTile { position, health } =
     )
 
 
-entityToTile : { name : String, position : Position, data : EntityData } -> ( Position, Tile msg )
-entityToTile { name, position, data } =
+entityToTile : Entity -> ( Position, Tile msg )
+entityToTile { name, position, data, intention } =
     let
         index =
             case data of
@@ -817,13 +833,34 @@ entityToTile { name, position, data } =
 
                         _ ->
                             Just 116
-    in
-    case index of
-        Just i ->
-            ( position, Tile.movable name <| Tile.fromPosition <| tilePositionFromIndex i )
 
-        Nothing ->
-            ( position, Tile.multipleTiles [] )
+        tiles =
+            [ index
+            , Maybe.map
+                (\direction ->
+                    case direction of
+                        Up ->
+                            132
+
+                        Right ->
+                            133
+
+                        Down ->
+                            134
+
+                        Left ->
+                            135
+                )
+                intention
+            ]
+    in
+    ( position
+    , tiles
+        |> List.filterMap
+            (Maybe.map (Tile.fromPosition << tilePositionFromIndex))
+        |> Tile.multipleTiles
+        |> Tile.movable name
+    )
 
 
 
