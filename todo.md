@@ -3,3 +3,4 @@
 3. mobile
 4. collisions
 5. gamepad
+6. different enemy move types - move three then rotate
